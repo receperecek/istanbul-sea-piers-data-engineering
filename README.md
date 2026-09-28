@@ -1,36 +1,49 @@
-# Istanbul Sea Piers Passenger Data (2025) — Databricks Fundamentals
+# Istanbul Sea Piers Passenger Journeys (2021–2025)
 
-An introductory data engineering project using a 2025 passenger-count CSV from the [Istanbul Metropolitan Municipality Open Data Portal](https://data.ibb.gov.tr/dataset). The Databricks SQL notebook loads the source into Delta tables, checks data quality, and builds two analysis-ready monthly summaries.
+A Databricks fundamentals project using annual CSV files from the [Istanbul Metropolitan Municipality Open Data Portal](https://data.ibb.gov.tr/dataset). It builds Delta Bronze, Silver, and Gold tables, validates their totals, and compares the published 2024 and 2025 journey counts. The [original 2025 walkthrough](IBB_Deniz_Iskeleleri_2025_Data_Engineering_ordered.sql) remains available as the first stage of the project.
 
-## Pipeline
+## Findings
 
-| Layer | Table | Purpose |
+| Year | Source rows | Months | Published journeys |
+| ---: | ---: | ---: | ---: |
+| 2021 | 979 | 12 | 47,445,145 |
+| 2022 | 978 | 12 | 71,572,152 |
+| 2023 | 1,000 | 12 | 72,087,043 |
+| 2024 | 970 | 12 | 70,283,867 |
+| 2025 | 958 | 12 | 70,513,663 |
+
+Across the five files, 4,885 source rows were loaded and reconciled against the monthly and authority Gold totals. The difference between the **published** 2025 and 2024 annual totals is **+229,796 (+0.33%)**. February 2025 was 1,658,742 below February 2024; November was 1,060,492 above November 2024.
+
+**Coverage limitation:** `ISTANBUL SEHIR HATLARI TUR. SAN. VE TIC. AS.` has no rows for October–December 2025, while the corresponding 2024 months have records. Those 2025 months contain seven observed authorities versus eight in 2024. The missing rows are not assumed to represent zero journeys. The annual and final-quarter differences compare the files as published, not necessarily like-for-like activity.
+
+![Journeys by month across five years](charts/monthly_journeys_2021_2025.svg)
+
+![Published monthly difference between 2025 and 2024](charts/monthly_difference_2024_2025.svg)
+
+## Data pipeline
+
+| Stage | Table(s) | What happens |
 | --- | --- | --- |
-| Raw | CSV in a Unity Catalog Volume | Retain the uploaded source file. |
-| Bronze | `workspace.default.ibb_deniz_iskeleleri_bronze` | Ingest source columns as text and retain `_metadata.file_path` as `kaynak_dosya`. |
-| Silver | `workspace.default.ibb_deniz_iskeleleri_silver` | Convert year/month to integers and passenger counts to `BIGINT`; trim station names and turn empty names into `NULL`. |
-| Gold | `workspace.default.ibb_deniz_iskeleleri_gold_aylik` | Aggregate by year and month. |
-| Gold | `workspace.default.ibb_deniz_iskeleleri_gold_aylik_otorite` | Aggregate by year, month, and authority. |
+| Raw | Five CSVs in `/Volumes/workspace/default/ibb_raw/` | Keep the source files in a Unity Catalog Volume. |
+| Bronze | `workspace.default.ibb_deniz_iskeleleri_bronze` and `workspace.default.ibb_deniz_iskeleleri_bronze_2021_2024` | Keep source fields as text plus `_metadata.file_path` for lineage. The 2025 CSV uses `;` and `yolcu_sayisi`; 2021–2024 use `,` and `toplam_yolculuk_sayisi`. |
+| Silver | `workspace.default.ibb_deniz_iskeleleri_silver_2021_2025` | Cast year, month, and journey counts; normalize empty station names; combine the two Bronze tables with `UNION ALL`. |
+| Gold | `workspace.default.ibb_deniz_iskeleleri_gold_aylik_2021_2025`, `_gold_yillik_2021_2025`, `_gold_aylik_otorite_2021_2025`, `_gold_karsilastirma_2024_2025` | Prepare monthly, yearly, authority-month, and 2024–2025 comparison tables. |
 
-The notebook source is [IBB_Deniz_Iskeleleri_2025_Data_Engineering_ordered.sql](IBB_Deniz_Iskeleleri_2025_Data_Engineering_ordered.sql). Its cells are ordered from source inspection through Bronze, Silver, Gold, and final checks.
-
-## Validated results
-
-- 958 source, Bronze, and Silver rows; 12 months in the monthly Gold table.
-- `SUM(yolcu_sayisi)` in Silver: **70,513,663**. This is the sum of the dataset's passenger-count field, not a count of distinct annual people.
-- 29 Silver rows have an unknown station name. They are retained and account for 322,004 in `yolcu_sayisi`.
-- The authority-month Gold table has 93 rows covering 8 authorities. One authority has records for January–September only. Missing October–December combinations should not be presented as zero demand.
-- A check for repeated `(yil, ay, otorite_adi, istasyon_adi)` keys returned no rows in this snapshot.
+The 2021–2025 Silver check found 12 months in every year, 181 rows without a station name, and no repeated `(yil, ay, otorite_adi, istasyon_adi)` keys in this snapshot. Gold totals reconcile to Silver by year. A source coverage comparison locates the three missing 2025 authority-month combinations.
 
 ## Run in Databricks
 
-1. Upload the source CSV to a Unity Catalog Volume at the path referenced in the notebook: `/Volumes/workspace/default/ibb_raw/2025-yl-istanbul-deniz-iskeleleri-yolcu-saylar.csv`. Change the two `read_files` paths if your location differs.
-2. Import the `.sql` source as a Databricks notebook and attach available SQL/serverless compute.
-3. Run the notebook from top to bottom. The `CREATE OR REPLACE TABLE` statements rewrite the four Delta tables in dependency order. Repeated runs create new Delta history entries, so run it when rebuilding the snapshot is needed.
-4. Review the final checks, including 958 Silver rows, 70,513,663 passenger counts, and 29 rows with unknown stations.
+1. Upload all five annual source CSVs to `/Volumes/workspace/default/ibb_raw/` using the paths in the notebooks. The raw data and Delta tables are not included here; change paths and `workspace.default` if your workspace differs.
+2. Run [the 2025 SQL notebook](IBB_Deniz_Iskeleleri_2025_Data_Engineering_ordered.sql) first. Its Bronze creation step provides `workspace.default.ibb_deniz_iskeleleri_bronze`, an input to the combined notebook.
+3. Import and run [the 2021–2025 notebook](IBB_Deniz_Iskeleleri_2021_2025_Data_Engineering.ipynb) top to bottom using compatible Databricks SQL/serverless compute. An [ordered SQL source export](IBB_Deniz_Iskeleleri_2021_2025_Data_Engineering_ordered.sql) is also provided for reading or importing.
+4. Check the yearly counts above, the 60 monthly Gold rows, the duplicate-key query's empty result, and the October–December authority coverage gap.
 
-The raw CSV and Delta table data are not bundled in this repository. The notebook uses workspace-specific catalog, schema, and Volume names; adjust them for another workspace. The source-format notebook contains code and Markdown, while Databricks chart settings and rendered outputs are not embedded in the `.sql` export.
+The `CREATE OR REPLACE TABLE` statements rebuild the Delta tables and add write history on repeated runs. The exported `.ipynb` includes saved table results and Databricks visualization definitions; its interactive charts need Databricks to render. The two SVG figures above are portable views of the saved query results.
+
+## Reproduce the figures without Databricks
+
+The small CSV files in [`results/`](results/) were transcribed from the executed notebook outputs and reconciled to the yearly totals. With Python and Matplotlib installed, run `python plot_results.py` to regenerate the SVG figures. This reproduces the **figures from saved aggregates**, not the Bronze-to-Gold pipeline; the original source CSVs and Databricks workspace are required for the latter.
 
 ## Interpretation limits
 
-The meaning of `tekil_yolcu_sayisi` needs confirmation from source documentation before treating sums across months as a yearly distinct-person count. The reason for the three missing authority-month combinations is unknown from this dataset alone. This project rebuilds a small, fixed CSV snapshot; it does not implement incremental ingestion or an automated schedule.
+`yolcu_sayisi` is summed as a journey count, not a count of unique annual people. The source definition of `tekil_yolcu_sayisi` has not been independently verified, so its sum is not reported as annual unique passengers. The reason for the missing 2025 authority-month records cannot be determined from these files alone. This is a fixed-snapshot learning project without incremental ingestion or a scheduled pipeline.
